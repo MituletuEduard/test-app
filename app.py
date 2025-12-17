@@ -4,6 +4,7 @@ import hashlib
 import pickle
 import subprocess
 from flask import Flask, request
+import re
 
 app = Flask(__name__)
 
@@ -43,10 +44,12 @@ def login():
 def ping_service():
     address = request.args.get('address')
     
-    # VULNERABILITATE 4: Command Injection
-    # Executarea comenzilor de sistem cu input de la utilizator nevalidat
-    command = "ping -c 1 " + address
-    subprocess.call(command, shell=True)
+    # Input validation: allow only IPs and hostnames (simple regex).
+    if not address or not re.match(r'^[a-zA-Z0-9.\-]+$', address):
+        return "Invalid address", 400
+    
+    # Secure command execution: no shell, pass argument list
+    subprocess.call(['ping', '-c', '1', address])
     
     return "Ping executed"
 
