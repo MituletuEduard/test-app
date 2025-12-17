@@ -1,71 +1,49 @@
+import http.server
+import socketserver
+import subprocess
+import urllib.parse
 import sqlite3
 import hashlib
-import pickle
-import subprocess
-import os
 
-# --- VULNERABILITATE 1: Hardcoded Credentials ---
-# CodeQL va detecta cheia secretă lăsată direct în cod
-AWS_ACCESS_KEY = "AKIA1234567890EXAMPLE"
-DB_PASSWORD = "supersecretpassword123"
+PORT = 8080
 
+# VULNERABILITATE: Hardcoded Secret
+API_KEY = "12345-SECRET-KEY-ADMIN"
 
-def vulnerable_sql_query(user_input):
-    # Creăm o bază de date temporară în memorie
-    conn = sqlite3.connect(':memory:')
-    cursor = conn.cursor()
-    cursor.execute("CREATE TABLE users (username TEXT, password TEXT)")
+class VulnerableHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        # Parsăm URL-ul pentru a lua parametrii
+        parsed_path = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed_path.query)
 
-    # --- VULNERABILITATE 2: SQL Injection ---
-    # Concatenarea string-urilor este periculoasă
-    query = "SELECT * FROM users WHERE username = '" + user_input + "'"
-    print(f"Executare query: {query}")
-    cursor.execute(query)
-    conn.close()
+        # 1. SQL INJECTION (Fără librării externe)
+        if 'user' in params:
+            user_input = params['user'][0]
+            conn = sqlite3.connect(':memory:')
+            cursor = conn.cursor()
+            # Vulnerabil: Concatenare directă
+            query = "SELECT * FROM users WHERE name = '" + user_input + "'"
+            cursor.executescript(query) # executescript e foarte periculos
+            conn.close()
 
+        # 2. COMMAND INJECTION
+        if 'cmd' in params:
+            cmd_input = params['cmd'][0]
+            # Vulnerabil: Execută orice comandă de sistem
+            subprocess.call(cmd_input, shell=True)
 
-def vulnerable_command_execution(filename):
-    print(f"Citire fișier: {filename}")
+        # 3. WEAK CRYPTO
+        if 'pass' in params:
+            pass_input = params['pass'][0]
+            # Vulnerabil: MD5
+            h = hashlib.md5(pass_input.encode()).hexdigest()
 
-    # --- VULNERABILITATE 3: Command Injection ---
-    # Dacă utilizatorul introduce "; rm -rf /", comanda va fi executată
-    # shell=True este periculos
-    subprocess.call("type " + filename, shell=True)
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Server Vulnerabil Ruland...")
 
-
-def weak_hashing(password):
-    # --- VULNERABILITATE 4: Weak Cryptography ---
-    # MD5 este spart și nu trebuie folosit pentru parole
-    h = hashlib.md5(password.encode())
-    print(f"Hash MD5: {h.hexdigest()}")
-
-
-def unsafe_deserialization(data_bytes):
-    # --- VULNERABILITATE 5: Insecure Deserialization ---
-    # pickle.loads poate executa cod arbitrar dacă datele sunt malițioase
-    try:
-        obj = pickle.loads(data_bytes)
-        print("Obiect încărcat.")
-    except:
-        print("Eroare la deserializare")
-
-
-def main():
-    print("--- Start Aplicație Vulnerabilă ---")
-
-    # Simulăm input de la utilizator (CodeQL urmărește fluxul datelor de aici)
-    user_in = input("Introdu username pentru căutare: ")
-    vulnerable_sql_query(user_in)
-
-    file_in = input("Introdu nume fișier de citit: ")
-    vulnerable_command_execution(file_in)
-
-    pass_in = input("Introdu parola pentru hash: ")
-    weak_hashing(pass_in)
-
-    # Simulare date binare primite din exterior
-    unsafe_deserialization(b"cos\nsystem\n(S'echo HACKED'\ntR.")
-
-
+# Pornim serverul
 if __name__ == "__main__":
-    main()
+    with socketserver.TCPServer(("", PORT), VulnerableHandler) as httpd:
+        print("Serving at port", PORT)
+        httpd.serve_forever()
