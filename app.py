@@ -1,49 +1,65 @@
-import http.server
-import socketserver
-import subprocess
-import urllib.parse
+import os
 import sqlite3
 import hashlib
+import pickle
+import subprocess
+from flask import Flask, request
 
-PORT = 8080
+app = Flask(__name__)
 
-# VULNERABILITATE: Hardcoded Secret
-API_KEY = "12345-SECRET-KEY-ADMIN"
+# VULNERABILITATE 1: Hardcoded Secrets (Chei secrete lăsate în cod)
+AWS_ACCESS_KEY = "AKIA1234567890EXAMPLE"
+AWS_SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 
-class VulnerableHandler(http.server.SimpleHTTPRequestHandler):
-    def do_GET(self):
-        # Parsăm URL-ul pentru a lua parametrii
-        parsed_path = urllib.parse.urlparse(self.path)
-        params = urllib.parse.parse_qs(parsed_path.query)
+def get_db_connection():
+    conn = sqlite3.connect('database.db')
+    return conn
 
-        # 1. SQL INJECTION (Fără librării externe)
-        if 'user' in params:
-            user_input = params['user'][0]
-            conn = sqlite3.connect(':memory:')
-            cursor = conn.cursor()
-            # Vulnerabil: Concatenare directă
-            query = "SELECT * FROM users WHERE name = '" + user_input + "'"
-            cursor.executescript(query) # executescript e foarte periculos
-            conn.close()
+@app.route('/login', methods=['POST'])
+def login():
+    username = request.form['username']
+    password = request.form['password']
 
-        # 2. COMMAND INJECTION
-        if 'cmd' in params:
-            cmd_input = params['cmd'][0]
-            # Vulnerabil: Execută orice comandă de sistem
-            subprocess.call(cmd_input, shell=True)
+    # VULNERABILITATE 2: Weak Hashing (Utilizarea MD5 care este nesigur)
+    # Parolele nu ar trebui stocate folosind MD5
+    hashed_password = hashlib.md5(password.encode()).hexdigest()
 
-        # 3. WEAK CRYPTO
-        if 'pass' in params:
-            pass_input = params['pass'][0]
-            # Vulnerabil: MD5
-            h = hashlib.md5(pass_input.encode()).hexdigest()
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Server Vulnerabil Ruland...")
+    # VULNERABILITATE 3: SQL Injection
+    # Concatenarea directă a string-urilor permite atacatorilor să manipuleze interogarea
+    query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + hashed_password + "'"
+    cursor.execute(query)
+    
+    user = cursor.fetchone()
+    conn.close()
 
-# Pornim serverul
-if __name__ == "__main__":
-    with socketserver.TCPServer(("", PORT), VulnerableHandler) as httpd:
-        print("Serving at port", PORT)
-        httpd.serve_forever()
+    if user:
+        return "Login successful"
+    return "Login failed"
+
+@app.route('/ping', methods=['GET'])
+def ping_service():
+    address = request.args.get('address')
+    
+    # VULNERABILITATE 4: Command Injection
+    # Executarea comenzilor de sistem cu input de la utilizator nevalidat
+    command = "ping -c 1 " + address
+    subprocess.call(command, shell=True)
+    
+    return "Ping executed"
+
+@app.route('/import', methods=['POST'])
+def import_data():
+    data = request.data
+    
+    # VULNERABILITATE 5: Insecure Deserialization
+    # 'pickle' nu trebuie folosit niciodată pe date din surse externe
+    obj = pickle.loads(data)
+    
+    return "Data imported"
+
+if __name__ == '__main__':
+    # VULNERABILITATE 6: Debug Mode Enabled in Production
+    app.run(debug=True)
